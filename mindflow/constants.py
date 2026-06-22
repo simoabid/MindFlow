@@ -8,7 +8,7 @@ AUTHOR = "Seemoo"
 LICENSE = "MIT"
 
 # Gemini settings
-DEFAULT_MODEL = "gemini-2.0-flash"
+DEFAULT_MODEL = "gemini-3.1-flash-lite-preview"
 MAX_PREDICTIONS = 3
 MAX_CONTEXT_LENGTH = 200  # chars of context to send
 

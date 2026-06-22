@@ -93,7 +93,7 @@ if [ ! -f "$CONFIG_FILE" ]; then
     cat > "$CONFIG_FILE" << 'CFG_EOF'
 {
     "api_key": "",
-    "model": "gemini-2.0-flash",
+    "model": "gemini-3.1-flash-lite-preview",
     "enabled": true,
     "debounce_ms": 300,
     "max_predictions": 3,
