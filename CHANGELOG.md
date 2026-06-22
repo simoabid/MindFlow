@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Planned (Privacy & Local-First)
+
+- **Local LLM mode** — Ollama/llama.cpp support with small models (Phi-3, Qwen2.5 0.5B). Slower but fully private, no data leaves the machine
+- **Hybrid mode** — Local model for basic predictions, cloud API only for complex/long-context queries
+- **Per-app whitelisting** — Only activate MindFlow in user-specified applications (e.g., browser, editor) while keeping it disabled in sensitive apps (terminals, password managers)
+- **Self-hosted API option** — Point to your own endpoint (local server, private cloud, or alternative AI provider) instead of Google's Gemini
+
 ### Added
 - Arrow key navigation (Up/Down/PageUp/PageDown) for prediction selection
 - Click support for accepting predictions from IBus candidate popup
