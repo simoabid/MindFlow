@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component>
+    <name>org.freedesktop.IBus.MindFlow</name>
+    <description>MindFlow AI Autocomplete Engine</description>
+    <exec>%LIBEXECDIR%/mindflow-engine --ibus</exec>
+    <version>0.1.0</version>
+    <author>Seemoo</author>
+    <license>MIT</license>
+    <homepage>https://github.com/seemoo/mindflow</homepage>
+    <textdomain>mindflow</textdomain>
+    <engines>
+        <engine>
+            <name>mindflow</name>
+            <longname>MindFlow AI Autocomplete</longname>
+            <language>en</language>
+            <license>MIT</license>
+            <author>Seemoo</author>
+            <layout>us</layout>
+            <icon>input-keyboard</icon>
+            <rank>0</rank>
+        </engine>
+    </engines>
+</component>

@@ -1,0 +1,13 @@
+<engine>
+    <name>mindflow</name>
+    <longname>MindFlow AI Autocomplete</longname>
+    <description>AI-powered autocomplete using Gemini</description>
+    <language>en</language>
+    <license>MIT</license>
+    <author>Seemoo</author>
+    <layout>us</layout>
+    <icon>input-keyboard</icon>
+    <rank>0</rank>
+    <setup></setup>
+    <symbol>🪄</symbol>
+</engine>
