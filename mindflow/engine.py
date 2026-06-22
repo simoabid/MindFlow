@@ -41,6 +41,7 @@ class MindFlowEngine(IBus.Engine):
         self._predictions: list[str] = []
         self._is_active = True
         self._prediction_lock = threading.Lock()
+        self._last_requested_context = ""
 
         logger.info("MindFlow engine initialized")
 
@@ -48,6 +49,10 @@ class MindFlowEngine(IBus.Engine):
         """Process each keystroke. Return True if handled, False to pass through."""
         # Ignore key releases
         if state & IBus.ModifierType.RELEASE_MASK:
+            return False
+
+        # Don't process when engine is not active
+        if not self._is_active:
             return False
 
         # Don't intercept when Control/Alt/Meta is held (let shortcuts through)
@@ -134,14 +139,23 @@ class MindFlowEngine(IBus.Engine):
         if len(self._context_buffer.strip()) < self.config.min_buffer_length:
             return
 
+        # Snapshot context under lock to avoid race condition
+        with self._prediction_lock:
+            context_snapshot = self._context_buffer
+
+        # Skip if same context as last request (deduplicate)
+        if context_snapshot == self._last_requested_context:
+            return
+        self._last_requested_context = context_snapshot
+
         # Run prediction in background to avoid blocking UI
-        thread = threading.Thread(target=self._fetch_predictions, daemon=True)
+        thread = threading.Thread(target=self._fetch_predictions, args=(context_snapshot,), daemon=True)
         thread.start()
 
-    def _fetch_predictions(self):
+    def _fetch_predictions(self, context):
         """Fetch predictions from Gemini (runs in background thread)."""
         try:
-            predictions = self.predictor.get_predictions(self._context_buffer)
+            predictions = self.predictor.get_predictions(context)
             with self._prediction_lock:
                 self._predictions = predictions
             # Schedule UI update on main thread
