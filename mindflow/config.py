@@ -6,7 +6,12 @@ import logging
 from pathlib import Path
 from dataclasses import dataclass, asdict
 
-from .constants import DEFAULT_MODEL, DEBOUNCE_MS, MAX_PREDICTIONS
+from .constants import (
+    DEFAULT_MODEL,
+    DEBOUNCE_MS,
+    MAX_PREDICTIONS,
+    MAX_SUGGESTION_WORDS,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +28,7 @@ class MindFlowConfig:
     enabled: bool = True
     debounce_ms: int = DEBOUNCE_MS
     max_predictions: int = MAX_PREDICTIONS
+    max_suggestion_words: int = MAX_SUGGESTION_WORDS
     min_buffer_length: int = 3
     trigger_key: str = "space"  # Trigger prediction after this key
     accept_key: str = "Tab"     # Accept top prediction with this key
