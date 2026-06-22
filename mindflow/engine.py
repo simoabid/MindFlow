@@ -5,13 +5,22 @@ import sys
 import signal
 import logging
 import threading
+import os
+from pathlib import Path
 import gi
 gi.require_version('IBus', '1.0')
 from gi.repository import IBus, GLib
 
 from .predictor import Predictor
 from .config import MindFlowConfig
-from .constants import ENGINE_NAME, ENGINE_LONG_NAME, ENGINE_DESCRIPTION
+from .constants import (
+    AUTHOR,
+    COMPONENT_NAME,
+    ENGINE_DESCRIPTION,
+    ENGINE_LONG_NAME,
+    ENGINE_NAME,
+    LICENSE,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -27,21 +36,25 @@ class MindFlowEngine(IBus.Engine):
 
     __gtype_name__ = "MindFlowEngine"
 
-    def __init__(self):
-        super().__init__()
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
         self.config = MindFlowConfig.load()
         self.predictor = Predictor(
             api_key=self.config.api_key,
             model=self.config.model,
+            max_predictions=self.config.max_predictions,
+            max_suggestion_words=self.config.max_suggestion_words,
         )
 
-        # Text buffer — accumulates what the user types
-        self._preedit_text = ""  # Current word being typed (before space)
+        # Context buffer mirrors normal typing while key events pass through.
+        self._preedit_text = ""
         self._context_buffer = ""  # Full context for predictions
         self._predictions: list[str] = []
+        self._selected_prediction_index = 0
         self._is_active = True
         self._prediction_lock = threading.Lock()
         self._last_requested_context = ""
+        self._prediction_timer_id = 0
 
         logger.info("MindFlow engine initialized")
 
@@ -60,47 +73,55 @@ class MindFlowEngine(IBus.Engine):
             return False
 
         # === ACCEPT PREDICTION: Tab ===
-        if keyval == IBus.Key.Tab and self._predictions:
+        if keyval == IBus.KEY_Tab and self._predictions:
             self._accept_prediction()
             return True
 
         # === DISMISS PREDICTION: Escape ===
-        if keyval == IBus.Key.Escape and self._predictions:
+        if keyval == IBus.KEY_Escape and self._predictions:
             self._dismiss_predictions()
             return True
 
+        # === NAVIGATE PREDICTIONS ===
+        if self._predictions and keyval in (IBus.KEY_Down, IBus.KEY_KP_Down):
+            return self._move_prediction_selection(1)
+
+        if self._predictions and keyval in (IBus.KEY_Up, IBus.KEY_KP_Up):
+            return self._move_prediction_selection(-1)
+
+        if self._predictions and keyval == IBus.KEY_Page_Down:
+            return self._move_prediction_selection(len(self._predictions) - 1)
+
+        if self._predictions and keyval == IBus.KEY_Page_Up:
+            return self._move_prediction_selection(-(len(self._predictions) - 1))
+
         # === BACKSPACE ===
-        if keyval == IBus.Key.BackSpace:
-            if self._preedit_text:
-                self._preedit_text = self._preedit_text[:-1]
+        if keyval == IBus.KEY_BackSpace:
+            if self._context_buffer:
                 self._context_buffer = self._context_buffer[:-1]
-                self._update_preedit()
                 self._trigger_prediction()
-                return True
+            self._preedit_text = ""
+            self.update_preedit_text(IBus.Text.new_from_string(""), 0, False)
             return False
 
         # === ENTER / RETURN ===
-        if keyval in (IBus.Key.Return, IBus.Key.KP_Enter):
-            self._commit_preedit()
+        if keyval in (IBus.KEY_Return, IBus.KEY_KP_Enter):
             self._context_buffer += "\n"
             self._clear_predictions()
             return False  # Let Enter pass through to the app
 
         # === SPACE ===
-        if keyval == IBus.Key.space:
-            self._commit_preedit()
+        if keyval == IBus.KEY_space:
             self._context_buffer += " "
-            self._clear_predictions()
+            self._trigger_prediction()
             return False  # Let space pass through
 
         # === REGULAR CHARACTER ===
         char = self._keyval_to_char(keyval)
         if char:
-            self._preedit_text += char
             self._context_buffer += char
-            self._update_preedit()
             self._trigger_prediction()
-            return True
+            return False
 
         return False
 
@@ -110,54 +131,56 @@ class MindFlowEngine(IBus.Engine):
             return chr(keyval)
         return None
 
-    def _update_preedit(self):
-        """Update the preedit text shown in the input field."""
-        if self._preedit_text:
-            text = IBus.Text.new_from_string(self._preedit_text)
-            attrs = IBus.AttrList()
-            attrs.append(IBus.Attribute.new(
-                IBus.AttrType.FOREGROUND,
-                IBus.AttrUnderline.SINGLE,
-                0, len(self._preedit_text),
-                0x0000FF00,  # Green color
-            ))
-            text.set_attributes(attrs)
-            self.update_preedit_text(text, len(self._preedit_text), True)
-        else:
-            self.update_preedit_text(IBus.Text.new_from_string(""), 0, False)
-
-    def _commit_preedit(self):
-        """Commit the preedit text to the application."""
-        if self._preedit_text:
-            text = IBus.Text.new_from_string(self._preedit_text)
-            self.commit_text(text)
-            self._preedit_text = ""
-            self.update_preedit_text(IBus.Text.new_from_string(""), 0, False)
-
     def _trigger_prediction(self):
-        """Request predictions from Gemini in a background thread."""
+        """Schedule a prediction after the user pauses typing."""
         if len(self._context_buffer.strip()) < self.config.min_buffer_length:
+            self._cancel_prediction_timer()
+            self._clear_predictions()
             return
 
-        # Snapshot context under lock to avoid race condition
-        with self._prediction_lock:
-            context_snapshot = self._context_buffer
-
-        # Skip if same context as last request (deduplicate)
+        context_snapshot = self._context_buffer
         if context_snapshot == self._last_requested_context:
             return
+
+        self._cancel_prediction_timer()
+        delay_ms = max(0, int(self.config.debounce_ms))
+        self._prediction_timer_id = GLib.timeout_add(
+            delay_ms,
+            self._run_scheduled_prediction,
+            context_snapshot,
+        )
+
+    def _cancel_prediction_timer(self):
+        """Cancel a pending prediction timer, if one exists."""
+        if self._prediction_timer_id:
+            GLib.source_remove(self._prediction_timer_id)
+            self._prediction_timer_id = 0
+
+    def _run_scheduled_prediction(self, context_snapshot):
+        """Start prediction work for the latest scheduled context."""
+        self._prediction_timer_id = 0
+        if context_snapshot != self._context_buffer:
+            return False
+
+        if context_snapshot == self._last_requested_context:
+            return False
+
         self._last_requested_context = context_snapshot
 
         # Run prediction in background to avoid blocking UI
         thread = threading.Thread(target=self._fetch_predictions, args=(context_snapshot,), daemon=True)
         thread.start()
+        return False
 
     def _fetch_predictions(self, context):
         """Fetch predictions from Gemini (runs in background thread)."""
         try:
             predictions = self.predictor.get_predictions(context)
             with self._prediction_lock:
+                if context != self._context_buffer:
+                    return
                 self._predictions = predictions
+                self._selected_prediction_index = 0
             # Schedule UI update on main thread
             GLib.idle_add(self._show_predictions)
         except Exception as e:
@@ -166,21 +189,25 @@ class MindFlowEngine(IBus.Engine):
     def _show_predictions(self):
         """Display predictions in the IBus auxiliary text panel."""
         if not self._predictions:
+            self.hide_lookup_table()
             self.hide_auxiliary_text()
             return False
 
-        # Build prediction display text
-        pred_display = "  |  ".join(
-            f"[{i+1}] {p}" for i, p in enumerate(self._predictions)
-        )
-        text = IBus.Text.new_from_string(f"  🪄 {pred_display}  [Tab]")
+        lookup_table = IBus.LookupTable(page_size=len(self._predictions))
+        for prediction in self._predictions:
+            lookup_table.append_candidate(IBus.Text.new_from_string(prediction))
+        lookup_table.set_cursor_visible(True)
+        lookup_table.set_cursor_pos(self._clamped_prediction_index())
+        self.update_lookup_table(lookup_table, True)
+        self.show_lookup_table()
+
+        text = IBus.Text.new_from_string("MindFlow predictions - Tab accepts, Esc dismisses")
 
         attrs = IBus.AttrList()
         attrs.append(IBus.Attribute.new(
             IBus.AttrType.FOREGROUND,
-            IBus.AttrUnderline.NONE,
-            0, len(text.get_text()),
             0x00AAAAAA,  # Gray color
+            0, len(text.get_text()),
         ))
         text.set_attributes(attrs)
 
@@ -188,12 +215,35 @@ class MindFlowEngine(IBus.Engine):
         self.show_auxiliary_text()
         return False  # Remove from GLib idle queue
 
-    def _accept_prediction(self):
-        """Accept the top prediction and insert it."""
+    def _clamped_prediction_index(self):
+        """Return a selected index that is valid for the current predictions."""
+        if not self._predictions:
+            self._selected_prediction_index = 0
+            return 0
+        self._selected_prediction_index %= len(self._predictions)
+        return self._selected_prediction_index
+
+    def _move_prediction_selection(self, delta):
+        """Move the highlighted prediction in the lookup table."""
+        if not self._predictions:
+            return False
+
+        self._selected_prediction_index = (
+            self._clamped_prediction_index() + delta
+        ) % len(self._predictions)
+        self._show_predictions()
+        return True
+
+    def _accept_prediction(self, index=None):
+        """Accept the selected prediction and insert it."""
         with self._prediction_lock:
             if not self._predictions:
                 return
-            prediction = self._predictions[0]
+            if index is None:
+                index = self._clamped_prediction_index()
+            if index < 0 or index >= len(self._predictions):
+                return
+            prediction = self._predictions[index]
 
         # Clear preedit
         self._preedit_text = ""
@@ -222,10 +272,36 @@ class MindFlowEngine(IBus.Engine):
 
     def _clear_predictions(self):
         """Clear all predictions and hide auxiliary text."""
+        self._cancel_prediction_timer()
         with self._prediction_lock:
             self._predictions = []
+            self._selected_prediction_index = 0
         self.predictor.clear_cache()
+        self.hide_lookup_table()
         self.hide_auxiliary_text()
+
+    def do_cursor_down(self):
+        """Called by the IBus panel when the candidate cursor moves down."""
+        self._move_prediction_selection(1)
+
+    def do_cursor_up(self):
+        """Called by the IBus panel when the candidate cursor moves up."""
+        self._move_prediction_selection(-1)
+
+    def do_page_down(self):
+        """Called by the IBus panel when the candidate cursor pages down."""
+        if self._predictions:
+            self._move_prediction_selection(len(self._predictions) - 1)
+
+    def do_page_up(self):
+        """Called by the IBus panel when the candidate cursor pages up."""
+        if self._predictions:
+            self._move_prediction_selection(-(len(self._predictions) - 1))
+
+    def do_candidate_clicked(self, index, button, state):
+        """Accept a clicked candidate from the IBus lookup table."""
+        if button == 1:
+            self._accept_prediction(index)
 
     def do_focus_in(self):
         """Called when an input field gains focus."""
@@ -235,6 +311,9 @@ class MindFlowEngine(IBus.Engine):
     def do_focus_out(self):
         """Called when an input field loses focus."""
         self._is_active = False
+        self._preedit_text = ""
+        self._context_buffer = ""
+        self._last_requested_context = ""
         self._clear_predictions()
         logger.debug("Focus out")
 
@@ -242,6 +321,7 @@ class MindFlowEngine(IBus.Engine):
         """Reset the engine state."""
         self._preedit_text = ""
         self._context_buffer = ""
+        self._last_requested_context = ""
         self._clear_predictions()
         logger.debug("Engine reset")
 
@@ -256,55 +336,99 @@ class MindFlowEngine(IBus.Engine):
         logger.info("MindFlow disabled")
 
 
-def on_create_engine(factory, engine_name):
-    """Callback to create engine instances."""
-    logger.debug(f"Factory creating engine: {engine_name}")
-    if engine_name == ENGINE_NAME:
-        return MindFlowEngine()
+def _ibus_address_from_file(path: Path):
+    """Return IBUS_ADDRESS from an ibus bus file, if present."""
+    try:
+        with path.open("r", encoding="utf-8") as bus_file:
+            for line in bus_file:
+                if line.startswith("IBUS_ADDRESS="):
+                    return line.strip().split("=", 1)[1]
+    except OSError as exc:
+        logger.debug("Could not read IBus bus file %s: %s", path, exc)
     return None
+
+
+def _ensure_ibus_address():
+    """Load the private IBus bus address when ibus-daemon did not export it."""
+    if os.environ.get("IBUS_ADDRESS"):
+        return True
+
+    bus_dir = Path.home() / ".config" / "ibus" / "bus"
+    try:
+        bus_files = sorted(
+            (path for path in bus_dir.iterdir() if path.is_file()),
+            key=lambda path: path.stat().st_mtime,
+            reverse=True,
+        )
+    except OSError as exc:
+        logger.warning("IBUS_ADDRESS is not set and %s is not readable: %s", bus_dir, exc)
+        return False
+
+    for path in bus_files:
+        address = _ibus_address_from_file(path)
+        if address:
+            os.environ["IBUS_ADDRESS"] = address
+            logger.info("Loaded IBUS_ADDRESS from %s", path)
+            return True
+
+    logger.warning("IBUS_ADDRESS is not set and no address was found in %s", bus_dir)
+    return False
+
+
+def _create_component():
+    """Build the IBus component descriptor used for manual registration."""
+    component = IBus.Component(
+        name=COMPONENT_NAME,
+        description="MindFlow AI Autocomplete Engine",
+        version="0.1.0",
+        license=LICENSE,
+        author=AUTHOR,
+        homepage="https://github.com/seemoo/mindflow",
+        command_line="mindflow-engine",
+        textdomain="mindflow",
+    )
+    engine_desc = IBus.EngineDesc(
+        name=ENGINE_NAME,
+        longname=ENGINE_LONG_NAME,
+        description=ENGINE_DESCRIPTION,
+        language="en",
+        license=LICENSE,
+        author=AUTHOR,
+        icon="input-keyboard",
+        layout="us",
+    )
+    component.add_engine(engine_desc)
+    return component
 
 
 def main():
     """Main entry point for the IBus engine."""
     logger.info("Starting MindFlow IBus engine...")
 
+    _ensure_ibus_address()
     bus = IBus.Bus()
 
     if not bus.is_connected():
         logger.error("Cannot connect to IBus daemon!")
         sys.exit(1)
 
-    # Create component
-    component = IBus.Component(
-        name="org.freedesktop.IBus.MindFlow",
-        description="MindFlow AI Autocomplete Engine",
-        version="0.1.0",
-        author="Seemoo",
-        homepage="https://github.com/seemoo/mindflow",
-        command_line="mindflow-engine",
-        textdomain="mindflow",
-    )
-
-    # Add engine to component
-    engine_desc = IBus.EngineDesc(
-        name=ENGINE_NAME,
-        longname=ENGINE_LONG_NAME,
-        description=ENGINE_DESCRIPTION,
-        language="en",
-        author="Seemoo",
-        icon="input-keyboard",
-        layout="us",
-    )
-    component.add_engine(engine_desc)
-
     # Create factory and register engine type
     # NOTE: Must pass bus= (not connection=) so the Python override sets object_path
-    # NOTE: Must pass the CLASS, not __gtype__, so Python's do_create_engine can call it
     factory = IBus.Factory(bus=bus)
-    factory.add_engine(ENGINE_NAME, MindFlowEngine)
+    factory.add_engine(ENGINE_NAME, MindFlowEngine.__gtype__)
 
-    # Register component
-    bus.register_component(component)
+    if "--ibus" in sys.argv:
+        # XML activation waits for this well-known name before attaching the
+        # component factory and calling CreateEngine.
+        name_reply = bus.request_name(COMPONENT_NAME, IBus.BusNameFlag.DO_NOT_QUEUE)
+        if name_reply not in (
+            IBus.BusRequestNameReply.PRIMARY_OWNER,
+            IBus.BusRequestNameReply.ALREADY_OWNER,
+        ):
+            logger.error("Could not own IBus component name %s: %s", COMPONENT_NAME, name_reply)
+            sys.exit(1)
+    else:
+        bus.register_component(_create_component())
 
     # Handle signals
     def sigterm_handler(signum, frame):
