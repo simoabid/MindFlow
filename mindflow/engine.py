@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 # Set up logging
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=logging.INFO,
     format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
 )
 
@@ -256,17 +256,12 @@ class MindFlowEngine(IBus.Engine):
         logger.info("MindFlow disabled")
 
 
-class MindFlowEngineFactory:
-    """Factory for creating MindFlow engine instances."""
-
-    def __init__(self, bus=None):
-        self._bus = bus
-
-    def create_engine(self, engine_name):
-        """Create and return a MindFlow engine instance."""
-        if engine_name == ENGINE_NAME:
-            return MindFlowEngine()
-        return None
+def on_create_engine(factory, engine_name):
+    """Callback to create engine instances."""
+    logger.debug(f"Factory creating engine: {engine_name}")
+    if engine_name == ENGINE_NAME:
+        return MindFlowEngine()
+    return None
 
 
 def main():
@@ -284,7 +279,6 @@ def main():
         name="org.freedesktop.IBus.MindFlow",
         description="MindFlow AI Autocomplete Engine",
         version="0.1.0",
-        license_="MIT",
         author="Seemoo",
         homepage="https://github.com/seemoo/mindflow",
         command_line="mindflow-engine",
@@ -297,16 +291,17 @@ def main():
         longname=ENGINE_LONG_NAME,
         description=ENGINE_DESCRIPTION,
         language="en",
-        license_="MIT",
         author="Seemoo",
         icon="input-keyboard",
         layout="us",
     )
     component.add_engine(engine_desc)
 
-    # Create factory and register
-    factory = IBus.Factory.new(bus.get_connection())
-    factory.add_engine(ENGINE_NAME, GLib.Variant("s", ENGINE_NAME))
+    # Create factory and register engine type
+    # NOTE: Must pass bus= (not connection=) so the Python override sets object_path
+    # NOTE: Must pass the CLASS, not __gtype__, so Python's do_create_engine can call it
+    factory = IBus.Factory(bus=bus)
+    factory.add_engine(ENGINE_NAME, MindFlowEngine)
 
     # Register component
     bus.register_component(component)
