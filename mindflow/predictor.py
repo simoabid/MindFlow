@@ -5,7 +5,13 @@ import time
 import logging
 
 from .gemini_client import GeminiClient
-from .constants import DEBOUNCE_MS, MIN_BUFFER_LENGTH
+from .constants import (
+    DEFAULT_MODEL,
+    DEBOUNCE_MS,
+    MAX_PREDICTIONS,
+    MAX_SUGGESTION_WORDS,
+    MIN_BUFFER_LENGTH,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -13,8 +19,19 @@ logger = logging.getLogger(__name__)
 class Predictor:
     """Manages predictions with caching and debouncing."""
 
-    def __init__(self, api_key: str = "", model: str = "gemini-2.0-flash"):
-        self.client = GeminiClient(api_key=api_key, model=model)
+    def __init__(
+        self,
+        api_key: str = "",
+        model: str = DEFAULT_MODEL,
+        max_predictions: int = MAX_PREDICTIONS,
+        max_suggestion_words: int = MAX_SUGGESTION_WORDS,
+    ):
+        self.client = GeminiClient(
+            api_key=api_key,
+            model=model,
+            max_predictions=max_predictions,
+            max_suggestion_words=max_suggestion_words,
+        )
         self._cache: dict[str, list[str]] = {}
         self._last_request_time: float = 0
         self._last_context: str = ""
