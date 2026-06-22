@@ -34,9 +34,11 @@ ok "Directories created"
 # ---------------------------------------------------------------------------
 # 2. Set up Python venv (if not already present)
 # ---------------------------------------------------------------------------
-if [ ! -d "$SCRIPT_DIR/venv" ]; then
-    info "Creating Python virtual environment…"
-    python3 -m venv "$SCRIPT_DIR/venv"
+if [ ! -x "$SCRIPT_DIR/venv/bin/python" ] || \
+   ! grep -q '^include-system-site-packages = true$' "$SCRIPT_DIR/venv/pyvenv.cfg" 2>/dev/null; then
+    info "Creating Python virtual environment with system GI bindings…"
+    rm -rf "$SCRIPT_DIR/venv"
+    python3 -m venv --system-site-packages "$SCRIPT_DIR/venv"
     ok "venv created"
 else
     info "venv already exists — skipping creation"
@@ -61,6 +63,21 @@ cat > "$LAUNCHER" << 'LAUNCHER_EOF'
 SCRIPT_DIR="__PROJECT_DIR__"
 cd "$SCRIPT_DIR"
 source "$SCRIPT_DIR/venv/bin/activate"
+
+if [ -z "${IBUS_ADDRESS:-}" ]; then
+    for bus_file in "$HOME"/.config/ibus/bus/*; do
+        [ -r "$bus_file" ] || continue
+        while IFS= read -r line; do
+            case "$line" in
+                IBUS_ADDRESS=*)
+                    export IBUS_ADDRESS="${line#IBUS_ADDRESS=}"
+                    break 2
+                    ;;
+            esac
+        done < "$bus_file"
+    done
+fi
+
 exec python -m mindflow.engine "$@"
 LAUNCHER_EOF
 
@@ -96,7 +113,8 @@ if [ ! -f "$CONFIG_FILE" ]; then
     "model": "gemini-3.1-flash-lite-preview",
     "enabled": true,
     "debounce_ms": 300,
-    "max_predictions": 3,
+    "max_predictions": 6,
+    "max_suggestion_words": 12,
     "min_buffer_length": 3,
     "trigger_key": "space",
     "accept_key": "Tab"
@@ -113,9 +131,25 @@ fi
 info "Restarting IBus daemon…"
 ibus restart 2>/dev/null && ok "IBus restarted" || {
     warn_msg="Could not restart IBus (not running or not installed). "
-    warn_msg+="You may need to log out and back in."
+    warn_msg+="Trying to start it now."
     printf '\033[1;33m[WARN]\033[0m  %s\n' "$warn_msg"
+    ibus-daemon -drx 2>/dev/null || true
 }
+
+ibus_ready=false
+for _ in {1..20}; do
+    if [ "$(ibus address 2>/dev/null)" != "(null)" ]; then
+        ok "IBus bus is ready"
+        ibus_ready=true
+        break
+    fi
+    sleep 0.25
+done
+
+if [ "$ibus_ready" != true ]; then
+    printf '\033[1;33m[WARN]\033[0m  %s\n' \
+        "IBus did not report a bus address yet. You may need to log out and back in."
+fi
 
 # ---------------------------------------------------------------------------
 # 9. Done
