@@ -55,3 +55,21 @@ def test_predictor_clear_cache():
     predictor.clear_cache()
     assert predictor._cache == {}
     assert predictor._pending_predictions == []
+
+
+def test_predictor_passes_display_settings_to_client():
+    """Predictor should pass suggestion count and length settings to GeminiClient."""
+    with patch("mindflow.predictor.GeminiClient") as MockClient:
+        Predictor(
+            api_key="test-key",
+            model="test-model",
+            max_predictions=6,
+            max_suggestion_words=12,
+        )
+
+        MockClient.assert_called_once_with(
+            api_key="test-key",
+            model="test-model",
+            max_predictions=6,
+            max_suggestion_words=12,
+        )

@@ -67,3 +67,44 @@ def test_none_response_text_returns_empty(mock_genai_client_cls):
     predictions = client.get_predictions_sync("The quick brown fox")
 
     assert predictions == []
+
+
+@patch("mindflow.gemini_client.genai.Client")
+def test_prompt_uses_configured_count_and_length(mock_genai_client_cls):
+    """Prompt should request the configured number and maximum word length."""
+    mock_client = MagicMock()
+    mock_genai_client_cls.return_value = mock_client
+    mock_client.models.generate_content.return_value = _make_mock_response("short answer\n")
+
+    client = GeminiClient(
+        api_key="test-key",
+        max_predictions=6,
+        max_suggestion_words=12,
+    )
+    client.get_predictions_sync("The quick brown fox")
+
+    kwargs = mock_client.models.generate_content.call_args.kwargs
+    prompt = kwargs["contents"]
+    assert "Return up to 6 different predictions" in prompt
+    assert "Keep predictions concise (2-12 words each)" in prompt
+
+
+@patch("mindflow.gemini_client.genai.Client")
+def test_response_is_limited_by_configured_count_and_length(mock_genai_client_cls):
+    """Client should enforce count and word limits even if the model exceeds them."""
+    mock_client = MagicMock()
+    mock_genai_client_cls.return_value = mock_client
+    mock_client.models.generate_content.return_value = _make_mock_response(
+        "one two three four\n"
+        "short phrase\n"
+        "another long answer here\n"
+    )
+
+    client = GeminiClient(
+        api_key="test-key",
+        max_predictions=2,
+        max_suggestion_words=3,
+    )
+    predictions = client.get_predictions_sync("The quick brown fox")
+
+    assert predictions == ["one two three", "short phrase"]
