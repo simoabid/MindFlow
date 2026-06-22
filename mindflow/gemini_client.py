@@ -69,7 +69,7 @@ class GeminiClient:
                 ),
             )
 
-            text = response.text.strip()
+            text = (response.text or "").strip()
             if not text:
                 return []
 
