@@ -189,8 +189,6 @@ class LocalProvider(PredictionProvider):
             if nxt is None or nxt in words:
                 break
             words.append(nxt)
-            if len(words) >= 3:  # keep suggestions short and useful
-                break
 
         return " ".join(words)
 

@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import threading
 from dataclasses import asdict, dataclass, fields
 from pathlib import Path
 
@@ -43,6 +44,9 @@ class StatsTracker:
     def __init__(self, path: str | Path | None = None, enabled: bool = True):
         self.path = Path(path) if path else STATS_FILE
         self.enabled = enabled
+        # Counters are incremented from both the GLib main thread and the
+        # background prediction thread, so guard the read-modify-write.
+        self._lock = threading.Lock()
         self.stats = self._load()
 
     def _load(self) -> Stats:
@@ -78,7 +82,8 @@ class StatsTracker:
             return
         if not hasattr(self.stats, field_name):
             return
-        setattr(self.stats, field_name, getattr(self.stats, field_name) + amount)
+        with self._lock:
+            setattr(self.stats, field_name, getattr(self.stats, field_name) + amount)
 
     def reset(self) -> None:
         self.stats = Stats()

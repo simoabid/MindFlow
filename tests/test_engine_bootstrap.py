@@ -98,6 +98,32 @@ def test_tab_accepts_prediction_without_retyping_context(monkeypatch):
     assert engine._context_buffer == "hello world"
 
 
+def test_join_prediction_handles_completion_and_next_word():
+    join = MindFlowEngine._join_prediction
+    # Fresh next word after a complete word: separated with a space.
+    assert join("hello", "world") == " world"
+    # Context already ends with a space: commit verbatim.
+    assert join("I am ", "writing to let") == "writing to let"
+    # Mid-word completion: commit only the missing suffix, no duplication.
+    assert join("I am writ", "writing to let") == "ing to let"
+    # Empty context: nothing to join against.
+    assert join("", "hello") == "hello"
+
+
+def test_tab_accept_completes_partial_word_without_duplication(monkeypatch):
+    engine = _make_uninitialized_engine(monkeypatch)
+    committed = []
+    engine._context_buffer = "I am writ"
+    engine._predictions = ["writing to let"]
+    engine.commit_text = lambda text: committed.append(text.get_text())
+
+    handled = engine.do_process_key_event(IBus.KEY_Tab, 0, 0)
+
+    assert handled is True
+    assert committed == ["ing to let"]
+    assert engine._context_buffer == "I am writing to let"
+
+
 def test_down_arrow_selects_next_prediction_for_tab_accept(monkeypatch):
     engine = _make_uninitialized_engine(monkeypatch)
     committed = []

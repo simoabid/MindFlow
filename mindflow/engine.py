@@ -273,18 +273,16 @@ class MindFlowEngine(IBus.Engine):
         self._preedit_text = ""
         self.update_preedit_text(IBus.Text.new_from_string(""), 0, False)
 
-        # Commit the prediction text
-        # Add a space before if context doesn't end with space
-        if self._context_buffer and not self._context_buffer.endswith(" "):
-            prediction = " " + prediction
+        # Join the prediction with what's already typed.
+        commit_text = self._join_prediction(self._context_buffer, prediction)
 
-        text = IBus.Text.new_from_string(prediction)
+        text = IBus.Text.new_from_string(commit_text)
         self.commit_text(text)
 
         # Update context buffer and let the provider learn from the acceptance.
         # Only feed the accepted suggestion (not the whole session buffer) so the
         # learned history stays small and doesn't accumulate overlapping text.
-        self._context_buffer += prediction
+        self._context_buffer += commit_text
         self.predictor.learn(prediction.strip())
         self._stats.increment("suggestions_accepted")
         self._stats.save()
@@ -294,7 +292,37 @@ class MindFlowEngine(IBus.Engine):
 
         # Do not log accepted text: as an input method it may contain sensitive
         # content. Log only its length at debug level.
-        logger.debug("Accepted prediction (%d chars)", len(prediction))
+        logger.debug("Accepted prediction (%d chars)", len(commit_text))
+
+    @staticmethod
+    def _join_prediction(context: str, prediction: str) -> str:
+        """Return the exact text to commit so it reads correctly in the app.
+
+        Predictions may either be a fresh next word/phrase or a completion of the
+        word the user is mid-way through typing. When the context ends inside a
+        word and the prediction's first word extends that partial word, commit
+        only the missing suffix (no leading space) instead of duplicating the
+        partial word. Otherwise, fall back to prepending a space when the context
+        doesn't already end with whitespace.
+        """
+        if not prediction:
+            return prediction
+        if not context or context[-1].isspace():
+            return prediction
+
+        # The partial word currently being typed (text after the last whitespace).
+        last_word = context.rsplit(None, 1)[-1] if context.split() else ""
+        first_word = prediction.split(" ", 1)[0]
+        if (
+            last_word
+            and len(first_word) > len(last_word)
+            and first_word.lower().startswith(last_word.lower())
+        ):
+            # Prediction completes the partial word: commit only the remainder.
+            return prediction[len(last_word) :]
+
+        # Fresh word: separate it from the preceding word with a space.
+        return " " + prediction
 
     def _dismiss_predictions(self):
         """Dismiss current predictions without accepting."""

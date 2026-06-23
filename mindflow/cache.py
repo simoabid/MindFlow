@@ -45,11 +45,13 @@ class TTLCache:
                 return None
             self._store.move_to_end(key)
             self.hits += 1
-            return value
+            # Return a copy so callers can't mutate the cached entry in place.
+            return list(value)
 
     def set(self, key: str, value: list[str]) -> None:
         with self._lock:
-            self._store[key] = (self._time(), value)
+            # Store a copy so later caller mutations don't affect the cache.
+            self._store[key] = (self._time(), list(value))
             self._store.move_to_end(key)
             while len(self._store) > self.max_entries:
                 self._store.popitem(last=False)

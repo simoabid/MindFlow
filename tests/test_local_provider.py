@@ -41,6 +41,16 @@ def test_predict_respects_max_suggestion_words():
     assert all(len(p.split()) <= 2 for p in predictions)
 
 
+def test_predict_can_exceed_three_words_when_configured():
+    # Regression: a hard-coded 3-word cap used to make max_suggestion_words
+    # ineffective. A higher limit must allow longer phrases when the model
+    # has a deterministic continuation to follow.
+    provider = LocalProvider(max_suggestion_words=6)
+    provider.learn("alpha beta gamma delta epsilon zeta")
+    predictions = provider.predict("alpha ")
+    assert any(len(p.split()) > 3 for p in predictions)
+
+
 def test_empty_context_returns_empty():
     provider = LocalProvider()
     assert provider.predict("") == []
