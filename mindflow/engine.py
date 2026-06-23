@@ -290,7 +290,9 @@ class MindFlowEngine(IBus.Engine):
         # Clear predictions
         self._clear_predictions()
 
-        logger.info("Accepted prediction: '%s'", prediction)
+        # Do not log accepted text: as an input method it may contain sensitive
+        # content. Log only its length at debug level.
+        logger.debug("Accepted prediction (%d chars)", len(prediction))
 
     def _dismiss_predictions(self):
         """Dismiss current predictions without accepting."""

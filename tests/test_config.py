@@ -1,4 +1,10 @@
 # tests/test_config.py
+import os
+import stat
+import sys
+
+import pytest
+
 from mindflow.config import MindFlowConfig
 from mindflow.constants import DEFAULT_MODEL
 
@@ -94,3 +100,11 @@ def test_config_override_path_env(tmp_path, monkeypatch):
     monkeypatch.setenv("MINDFLOW_CONFIG", str(config_path))
     config = MindFlowConfig.load()
     assert config.max_predictions == 7
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX permissions only")
+def test_saved_config_is_owner_only(tmp_path):
+    config_path = tmp_path / "config.json"
+    MindFlowConfig(api_key="secret").save(str(config_path))
+    mode = stat.S_IMODE(os.stat(config_path).st_mode)
+    assert mode == 0o600

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 from collections import Counter, defaultdict
 from pathlib import Path
@@ -21,6 +22,9 @@ from .base import PredictionProvider
 logger = logging.getLogger(__name__)
 
 _TOKEN_RE = re.compile(r"[A-Za-z']+")
+
+# Bound on-disk learned history so accepted text isn't retained indefinitely.
+MAX_HISTORY_LINES = 500
 
 # A compact but varied seed corpus so the model produces useful suggestions
 # out of the box, before it has learned anything from the user.
@@ -91,6 +95,10 @@ class LocalProvider(PredictionProvider):
             return
         self._train(text)
         self._learned_text.append(text.strip())
+        # Keep only the most recent lines so we don't retain accepted text
+        # (which may be sensitive) without bound.
+        if len(self._learned_text) > MAX_HISTORY_LINES:
+            self._learned_text = self._learned_text[-MAX_HISTORY_LINES:]
         self._save_history()
 
     # --------------------------------------------------------------- prediction
@@ -206,7 +214,7 @@ class LocalProvider(PredictionProvider):
                 data = json.load(f)
             lines = data.get("lines", [])
             if isinstance(lines, list):
-                self._learned_text = [str(line) for line in lines]
+                self._learned_text = [str(line) for line in lines][-MAX_HISTORY_LINES:]
                 for line in self._learned_text:
                     self._train(line)
         except (OSError, json.JSONDecodeError, ValueError) as e:
@@ -217,9 +225,15 @@ class LocalProvider(PredictionProvider):
             return
         # Persist the raw accepted lines and retrain on load. This keeps the
         # file human-readable and avoids serialising large nested counters.
+        # Written owner-only (0600) since accepted text may be sensitive.
         try:
             self._history_path.parent.mkdir(parents=True, exist_ok=True)
-            with open(self._history_path, "w", encoding="utf-8") as f:
+            fd = os.open(self._history_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
                 json.dump({"lines": self._learned_text}, f, indent=2)
+            try:
+                os.chmod(self._history_path, 0o600)
+            except OSError as e:  # pragma: no cover - platform dependent
+                logger.debug("Could not set permissions on local history: %s", e)
         except OSError as e:
             logger.debug("Could not persist local history: %s", e)

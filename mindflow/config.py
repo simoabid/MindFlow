@@ -61,11 +61,23 @@ class MindFlowConfig:
     stats_enabled: bool = True
 
     def save(self, path: str | os.PathLike[str] | None = None) -> None:
-        """Save config to JSON file."""
+        """Save config to JSON file.
+
+        The file may contain the Gemini API key, so it is written with
+        owner-only (0600) permissions to keep it out of reach of other local
+        users.
+        """
         config_path = Path(path) if path else _config_path()
         config_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(config_path, "w", encoding="utf-8") as f:
+        # Open with restrictive permissions instead of relying on the umask.
+        fd = os.open(config_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(asdict(self), f, indent=2)
+        # Tighten permissions on pre-existing files too (O_CREAT won't reapply).
+        try:
+            os.chmod(config_path, 0o600)
+        except OSError as e:  # pragma: no cover - platform dependent
+            logger.debug("Could not set permissions on %s: %s", config_path, e)
         logger.info("Config saved to %s", config_path)
 
     @classmethod

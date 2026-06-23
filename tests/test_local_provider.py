@@ -1,5 +1,12 @@
 # tests/test_local_provider.py
-from mindflow.providers.local import LocalProvider, _tokenize
+import json
+import os
+import stat
+import sys
+
+import pytest
+
+from mindflow.providers.local import MAX_HISTORY_LINES, LocalProvider, _tokenize
 
 
 def test_tokenize_lowercases_and_splits():
@@ -66,3 +73,22 @@ def test_predictions_are_deduplicated():
     provider = LocalProvider()
     predictions = provider.predict("the ")
     assert len(predictions) == len({p.lower() for p in predictions})
+
+
+def test_history_is_bounded(tmp_path):
+    history = tmp_path / "history.json"
+    provider = LocalProvider(history_path=history)
+    for i in range(MAX_HISTORY_LINES + 50):
+        provider.learn(f"line number {i}")
+    data = json.loads(history.read_text())
+    assert len(data["lines"]) == MAX_HISTORY_LINES
+    # Oldest entries are dropped, newest retained.
+    assert data["lines"][-1] == f"line number {MAX_HISTORY_LINES + 49}"
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX permissions only")
+def test_history_file_is_owner_only(tmp_path):
+    history = tmp_path / "history.json"
+    LocalProvider(history_path=history).learn("some accepted text")
+    mode = stat.S_IMODE(os.stat(history).st_mode)
+    assert mode == 0o600
