@@ -13,6 +13,7 @@ import json
 import logging
 import os
 import re
+import threading
 from collections import Counter, defaultdict
 from pathlib import Path
 
@@ -76,6 +77,10 @@ class LocalProvider(PredictionProvider):
         self._trigram: dict[tuple[str, str], Counter[str]] = defaultdict(Counter)
         self._vocab: set[str] = set()
         self._learned_text: list[str] = []
+        # predict() runs on a background thread while learn() runs on the main
+        # GLib thread; guard the shared n-gram tables so a reader never iterates
+        # a structure that a writer is mutating.
+        self._lock = threading.Lock()
 
         self._train(SEED_CORPUS)
         self._load_history()
@@ -93,12 +98,13 @@ class LocalProvider(PredictionProvider):
     def learn(self, text: str) -> None:
         if not text or not text.strip():
             return
-        self._train(text)
-        self._learned_text.append(text.strip())
-        # Keep only the most recent lines so we don't retain accepted text
-        # (which may be sensitive) without bound.
-        if len(self._learned_text) > MAX_HISTORY_LINES:
-            self._learned_text = self._learned_text[-MAX_HISTORY_LINES:]
+        with self._lock:
+            self._train(text)
+            self._learned_text.append(text.strip())
+            # Keep only the most recent lines so we don't retain accepted text
+            # (which may be sensitive) without bound.
+            if len(self._learned_text) > MAX_HISTORY_LINES:
+                self._learned_text = self._learned_text[-MAX_HISTORY_LINES:]
         self._save_history()
 
     # --------------------------------------------------------------- prediction
@@ -111,26 +117,27 @@ class LocalProvider(PredictionProvider):
         if not tokens:
             return []
 
-        if ends_with_space:
-            seeds = self._next_word_candidates(tokens)
-            prefix = ""
-        else:
-            # The last token is a word still being typed: complete it.
-            partial = tokens[-1]
-            history = tokens[:-1]
-            seeds = self._completion_candidates(partial, history)
-            prefix = partial
+        with self._lock:
+            if ends_with_space:
+                seeds = self._next_word_candidates(tokens)
+                prefix = ""
+            else:
+                # The last token is a word still being typed: complete it.
+                partial = tokens[-1]
+                history = tokens[:-1]
+                seeds = self._completion_candidates(partial, history)
+                prefix = partial
 
-        predictions: list[str] = []
-        seen: set[str] = set()
-        for first_word, _ in seeds:
-            phrase = self._extend_phrase(tokens, first_word, prefix, ends_with_space)
-            key = phrase.lower()
-            if phrase and key not in seen:
-                seen.add(key)
-                predictions.append(phrase)
-            if len(predictions) >= self.max_predictions:
-                break
+            predictions: list[str] = []
+            seen: set[str] = set()
+            for first_word, _ in seeds:
+                phrase = self._extend_phrase(tokens, first_word, prefix, ends_with_space)
+                key = phrase.lower()
+                if phrase and key not in seen:
+                    seen.add(key)
+                    predictions.append(phrase)
+                if len(predictions) >= self.max_predictions:
+                    break
         return predictions
 
     def _next_word_candidates(self, tokens: list[str]) -> list[tuple[str, int]]:

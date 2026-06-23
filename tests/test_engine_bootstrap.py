@@ -106,6 +106,8 @@ def test_join_prediction_handles_completion_and_next_word():
     assert join("I am ", "writing to let") == "writing to let"
     # Mid-word completion: commit only the missing suffix, no duplication.
     assert join("I am writ", "writing to let") == "ing to let"
+    # Prediction repeats the exact word just typed: drop the duplicate.
+    assert join("hello", "hello world") == " world"
     # Empty context: nothing to join against.
     assert join("", "hello") == "hello"
 

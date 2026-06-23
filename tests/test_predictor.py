@@ -41,6 +41,17 @@ def test_predictor_caches_results():
     assert provider.calls == 1  # second call served from cache
 
 
+def test_predictor_cache_is_case_sensitive():
+    """Case variants must not collide on the same cache entry."""
+    provider = CountingProvider()
+    predictor = _predictor(provider)
+
+    predictor.get_predictions("Python rocks")
+    predictor.get_predictions("python rocks")
+
+    assert provider.calls == 2
+
+
 def test_predictor_calls_provider_for_new_context():
     provider = CountingProvider(result=["is a test"])
     predictor = _predictor(provider)

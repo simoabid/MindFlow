@@ -315,10 +315,13 @@ class MindFlowEngine(IBus.Engine):
         first_word = prediction.split(" ", 1)[0]
         if (
             last_word
-            and len(first_word) > len(last_word)
+            and len(first_word) >= len(last_word)
             and first_word.lower().startswith(last_word.lower())
         ):
-            # Prediction completes the partial word: commit only the remainder.
+            # Prediction extends (or repeats) the partial word: commit only the
+            # part after what's already typed, so the word isn't duplicated. Using
+            # ">=" also covers the case where the prediction starts with the exact
+            # word the user just typed (e.g. "hello" + "hello world" -> " world").
             return prediction[len(last_word) :]
 
         # Fresh word: separate it from the preceding word with a space.

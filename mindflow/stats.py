@@ -67,9 +67,11 @@ class StatsTracker:
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             # Owner-only perms, consistent with config/history files.
+            with self._lock:
+                snapshot = asdict(self.stats)
             fd = os.open(self.path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
             with os.fdopen(fd, "w", encoding="utf-8") as f:
-                json.dump(asdict(self.stats), f, indent=2)
+                json.dump(snapshot, f, indent=2)
             try:
                 os.chmod(self.path, 0o600)
             except OSError as e:  # pragma: no cover - platform dependent

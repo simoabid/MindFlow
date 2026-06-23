@@ -56,7 +56,9 @@ class Predictor:
             self._pending_predictions = []
             return []
 
-        cache_key = context.strip().lower()
+        # Case-sensitive key: providers may predict differently for "Python" vs
+        # "python", so don't let case variants collide on the same cache entry.
+        cache_key = context.strip()
         cached = self._cache.get(cache_key)
         if cached is not None:
             self._pending_predictions = cached
