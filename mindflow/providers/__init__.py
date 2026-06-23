@@ -45,7 +45,11 @@ class FallbackProvider(PredictionProvider):
                 predictions = []
             if predictions:
                 return predictions
-        return self.fallback.predict(context)
+        try:
+            return self.fallback.predict(context)
+        except Exception as e:  # defensive: a misbehaving fallback must not break typing
+            logger.warning("Fallback provider %r failed: %s", self.fallback.name, e)
+            return []
 
     def is_available(self) -> bool:
         return self.primary.is_available() or self.fallback.is_available()
