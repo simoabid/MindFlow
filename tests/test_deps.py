@@ -1,25 +1,13 @@
 #!/usr/bin/env python3
-"""Test script to verify MindFlow dependencies."""
-import sys
+"""Verify MindFlow runtime dependencies are importable."""
 
-def test_ibus():
-    try:
-        from gi.repository import IBus
-        print("IBus OK")
-        return True
-    except Exception as e:
-        print(f"IBus FAILED: {e}")
-        return False
 
-def test_gemini():
-    try:
-        from google import genai
-        print("Gemini SDK OK")
-        return True
-    except Exception as e:
-        print(f"Gemini SDK FAILED: {e}")
-        return False
+def test_ibus_bindings_importable():
+    import gi
 
-if __name__ == "__main__":
-    results = [test_ibus(), test_gemini()]
-    sys.exit(0 if all(results) else 1)
+    gi.require_version("IBus", "1.0")
+    from gi.repository import IBus  # noqa: F401
+
+
+def test_gemini_sdk_importable():
+    from google import genai  # noqa: F401

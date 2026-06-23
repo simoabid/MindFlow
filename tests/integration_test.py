@@ -1,14 +1,14 @@
 # tests/integration_test.py
 """Manual integration test — run this to verify the Gemini pipeline works."""
 
-import sys
 import os
+import sys
 
 # Add parent dir to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from mindflow.predictor import Predictor
 from mindflow.config import MindFlowConfig
+from mindflow.predictor import Predictor
 
 
 def test_full_pipeline():

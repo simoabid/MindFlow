@@ -1,81 +1,97 @@
 # mindflow/predictor.py
-"""Prediction manager with caching and context tracking."""
+"""Prediction manager: provider + bounded cache."""
 
-import time
+from __future__ import annotations
+
 import logging
+from pathlib import Path
 
-from .gemini_client import GeminiClient
+from .cache import TTLCache
+from .config import MindFlowConfig
 from .constants import (
-    DEFAULT_MODEL,
-    DEBOUNCE_MS,
-    MAX_PREDICTIONS,
-    MAX_SUGGESTION_WORDS,
+    CACHE_MAX_ENTRIES,
+    CACHE_TTL_SECONDS,
     MIN_BUFFER_LENGTH,
 )
+from .providers import PredictionProvider, build_provider
 
 logger = logging.getLogger(__name__)
 
 
 class Predictor:
-    """Manages predictions with caching and debouncing."""
+    """Turns typing context into predictions, caching results per context.
+
+    Debouncing is the caller's responsibility (the IBus engine schedules calls
+    on a timer); this class focuses on caching and delegating to a provider.
+    """
 
     def __init__(
         self,
-        api_key: str = "",
-        model: str = DEFAULT_MODEL,
-        max_predictions: int = MAX_PREDICTIONS,
-        max_suggestion_words: int = MAX_SUGGESTION_WORDS,
+        provider: PredictionProvider,
+        *,
+        min_buffer_length: int = MIN_BUFFER_LENGTH,
+        cache_max_entries: int = CACHE_MAX_ENTRIES,
+        cache_ttl_seconds: int = CACHE_TTL_SECONDS,
     ):
-        self.client = GeminiClient(
-            api_key=api_key,
-            model=model,
-            max_predictions=max_predictions,
-            max_suggestion_words=max_suggestion_words,
-        )
-        self._cache: dict[str, list[str]] = {}
-        self._last_request_time: float = 0
-        self._last_context: str = ""
+        self.provider = provider
+        self.min_buffer_length = max(1, int(min_buffer_length))
+        self._cache = TTLCache(max_entries=cache_max_entries, ttl_seconds=cache_ttl_seconds)
         self._pending_predictions: list[str] = []
 
-    def get_predictions(self, context: str) -> list[str]:
-        """Get predictions for the current context.
+    @classmethod
+    def from_config(
+        cls, config: MindFlowConfig, history_path: str | Path | None = None
+    ) -> Predictor:
+        """Build a predictor (and its provider) from a config object."""
+        return cls(
+            provider=build_provider(config, history_path=history_path),
+            min_buffer_length=config.min_buffer_length,
+            cache_max_entries=config.cache_max_entries,
+            cache_ttl_seconds=config.cache_ttl_seconds,
+        )
 
-        Uses caching and debouncing to minimize API calls.
-        """
-        if not context or len(context.strip()) < MIN_BUFFER_LENGTH:
+    def get_predictions(self, context: str) -> list[str]:
+        """Get predictions for the current context, using the cache when fresh."""
+        if not context or len(context.strip()) < self.min_buffer_length:
             self._pending_predictions = []
             return []
 
-        # Check cache first
         cache_key = context.strip().lower()
-        if cache_key in self._cache:
-            self._pending_predictions = self._cache[cache_key]
-            return self._pending_predictions
+        cached = self._cache.get(cache_key)
+        if cached is not None:
+            self._pending_predictions = cached
+            return cached
 
-        # Debounce: only make API call if enough time has passed
-        now = time.time() * 1000  # ms
-        if (now - self._last_request_time) < DEBOUNCE_MS:
-            return self._pending_predictions
-
-        self._last_request_time = now
-        self._last_context = context
-
-        # Call Gemini
-        predictions = self.client.get_predictions_sync(context)
-        self._cache[cache_key] = predictions
+        predictions = self.provider.predict(context)
+        self._cache.set(cache_key, predictions)
         self._pending_predictions = predictions
-
-        logger.debug(f"Predictions for '{context[-30:]}': {predictions}")
+        logger.debug("Predictions for '%s': %s", context[-30:], predictions)
         return predictions
+
+    def learn(self, text: str) -> None:
+        """Feed accepted text back to the provider so it can adapt."""
+        self.provider.learn(text)
 
     def get_pending(self) -> list[str]:
         """Get the last computed predictions without triggering a new call."""
         return self._pending_predictions
 
-    def clear_cache(self):
-        """Clear the prediction cache."""
+    def clear_pending(self) -> None:
+        """Drop the currently displayed predictions (keeps the cache warm)."""
+        self._pending_predictions = []
+
+    def clear_cache(self) -> None:
+        """Clear the prediction cache and pending predictions."""
         self._cache.clear()
         self._pending_predictions = []
+
+    @property
+    def cache_stats(self) -> dict[str, int]:
+        return {
+            "size": len(self._cache),
+            "hits": self._cache.hits,
+            "misses": self._cache.misses,
+        }
 
     @property
     def has_predictions(self) -> bool:

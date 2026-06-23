@@ -2,7 +2,6 @@ import os
 import threading
 from types import SimpleNamespace
 
-import pytest
 import gi
 
 gi.require_version("IBus", "1.0")
@@ -16,13 +15,22 @@ def _make_uninitialized_engine(monkeypatch, min_buffer_length=1, debounce_ms=0):
     engine.config = SimpleNamespace(
         min_buffer_length=min_buffer_length,
         debounce_ms=debounce_ms,
+        enabled=True,
+        stats_enabled=True,
+        disable_in_password_fields=True,
     )
-    engine.predictor = SimpleNamespace(clear_cache=lambda: None)
+    engine.predictor = SimpleNamespace(
+        clear_cache=lambda: None,
+        clear_pending=lambda: None,
+        learn=lambda text: None,
+    )
+    engine._stats = SimpleNamespace(increment=lambda *a, **k: None, save=lambda: None)
     engine._preedit_text = ""
     engine._context_buffer = ""
     engine._predictions = []
     engine._selected_prediction_index = 0
     engine._is_active = True
+    engine._sensitive_field = False
     engine._prediction_lock = threading.Lock()
     engine._last_requested_context = ""
     engine._prediction_timer_id = 0
@@ -48,9 +56,7 @@ def test_ensure_ibus_address_reads_bus_file(monkeypatch, tmp_path):
     bus_dir.mkdir(parents=True)
     address = "unix:path=/tmp/ibus-test,guid=abc=def"
     (bus_dir / "test-bus").write_text(
-        "# created by ibus-daemon\n"
-        f"IBUS_ADDRESS={address}\n"
-        "IBUS_DAEMON_PID=123\n",
+        f"# created by ibus-daemon\nIBUS_ADDRESS={address}\nIBUS_DAEMON_PID=123\n",
         encoding="utf-8",
     )
     monkeypatch.delenv("IBUS_ADDRESS", raising=False)
@@ -128,3 +134,42 @@ def test_reset_allows_same_context_to_request_again(monkeypatch):
 
     assert engine._context_buffer == ""
     assert engine._last_requested_context == ""
+
+
+def test_disabled_engine_passes_keys_through(monkeypatch):
+    engine = _make_uninitialized_engine(monkeypatch)
+    engine.config.enabled = False
+
+    handled = engine.do_process_key_event(ord("a"), 0, 0)
+
+    assert handled is False
+    assert engine._context_buffer == ""  # nothing buffered when disabled
+
+
+def test_sensitive_field_disables_buffering(monkeypatch):
+    engine = _make_uninitialized_engine(monkeypatch)
+    engine._sensitive_field = True
+
+    handled = engine.do_process_key_event(ord("a"), 0, 0)
+
+    assert handled is False
+    assert engine._context_buffer == ""
+
+
+def test_set_content_type_marks_password_field(monkeypatch):
+    engine = _make_uninitialized_engine(monkeypatch)
+    engine._context_buffer = "secret"
+
+    engine.do_set_content_type(int(IBus.InputPurpose.PASSWORD), 0)
+
+    assert engine._sensitive_field is True
+    assert engine._context_buffer == ""
+
+
+def test_set_content_type_clears_flag_for_normal_field(monkeypatch):
+    engine = _make_uninitialized_engine(monkeypatch)
+    engine._sensitive_field = True
+
+    engine.do_set_content_type(int(IBus.InputPurpose.FREE_FORM), 0)
+
+    assert engine._sensitive_field is False

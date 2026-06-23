@@ -1,6 +1,6 @@
 # tests/test_gemini_client.py
-import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
+
 from mindflow.gemini_client import GeminiClient
 
 
@@ -95,9 +95,7 @@ def test_response_is_limited_by_configured_count_and_length(mock_genai_client_cl
     mock_client = MagicMock()
     mock_genai_client_cls.return_value = mock_client
     mock_client.models.generate_content.return_value = _make_mock_response(
-        "one two three four\n"
-        "short phrase\n"
-        "another long answer here\n"
+        "one two three four\nshort phrase\nanother long answer here\n"
     )
 
     client = GeminiClient(

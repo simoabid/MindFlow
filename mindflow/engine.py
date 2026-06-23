@@ -1,17 +1,18 @@
 # mindflow/engine.py
 """MindFlow IBus Engine — AI-powered autocomplete."""
 
-import sys
-import signal
 import logging
-import threading
 import os
+import signal
+import sys
+import threading
 from pathlib import Path
-import gi
-gi.require_version('IBus', '1.0')
-from gi.repository import IBus, GLib
 
-from .predictor import Predictor
+import gi
+
+gi.require_version("IBus", "1.0")
+from gi.repository import GLib, IBus
+
 from .config import MindFlowConfig
 from .constants import (
     AUTHOR,
@@ -19,8 +20,12 @@ from .constants import (
     ENGINE_DESCRIPTION,
     ENGINE_LONG_NAME,
     ENGINE_NAME,
+    HOMEPAGE,
     LICENSE,
+    STATE_DIR,
 )
+from .predictor import Predictor
+from .stats import StatsTracker
 
 logger = logging.getLogger(__name__)
 
@@ -39,12 +44,11 @@ class MindFlowEngine(IBus.Engine):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.config = MindFlowConfig.load()
-        self.predictor = Predictor(
-            api_key=self.config.api_key,
-            model=self.config.model,
-            max_predictions=self.config.max_predictions,
-            max_suggestion_words=self.config.max_suggestion_words,
+        self.predictor = Predictor.from_config(
+            self.config,
+            history_path=STATE_DIR / "local_history.json",
         )
+        self._stats = StatsTracker(enabled=self.config.stats_enabled)
 
         # Context buffer mirrors normal typing while key events pass through.
         self._preedit_text = ""
@@ -52,11 +56,12 @@ class MindFlowEngine(IBus.Engine):
         self._predictions: list[str] = []
         self._selected_prediction_index = 0
         self._is_active = True
+        self._sensitive_field = False  # password / PIN inputs
         self._prediction_lock = threading.Lock()
         self._last_requested_context = ""
         self._prediction_timer_id = 0
 
-        logger.info("MindFlow engine initialized")
+        logger.info("MindFlow engine initialized (provider=%s)", self.config.provider)
 
     def do_process_key_event(self, keyval, keycode, state):
         """Process each keystroke. Return True if handled, False to pass through."""
@@ -64,8 +69,12 @@ class MindFlowEngine(IBus.Engine):
         if state & IBus.ModifierType.RELEASE_MASK:
             return False
 
-        # Don't process when engine is not active
-        if not self._is_active:
+        # Don't process when engine is not active or globally disabled
+        if not self._is_active or not self.config.enabled:
+            return False
+
+        # Respect privacy in password/PIN fields: never buffer or predict.
+        if self._sensitive_field:
             return False
 
         # Don't intercept when Control/Alt/Meta is held (let shortcuts through)
@@ -133,6 +142,11 @@ class MindFlowEngine(IBus.Engine):
 
     def _trigger_prediction(self):
         """Schedule a prediction after the user pauses typing."""
+        if self._sensitive_field:
+            self._cancel_prediction_timer()
+            self._clear_predictions()
+            return
+
         if len(self._context_buffer.strip()) < self.config.min_buffer_length:
             self._cancel_prediction_timer()
             self._clear_predictions()
@@ -168,13 +182,16 @@ class MindFlowEngine(IBus.Engine):
         self._last_requested_context = context_snapshot
 
         # Run prediction in background to avoid blocking UI
-        thread = threading.Thread(target=self._fetch_predictions, args=(context_snapshot,), daemon=True)
+        thread = threading.Thread(
+            target=self._fetch_predictions, args=(context_snapshot,), daemon=True
+        )
         thread.start()
         return False
 
     def _fetch_predictions(self, context):
-        """Fetch predictions from Gemini (runs in background thread)."""
+        """Fetch predictions from the provider (runs in background thread)."""
         try:
+            self._stats.increment("predictions_requested")
             predictions = self.predictor.get_predictions(context)
             with self._prediction_lock:
                 if context != self._context_buffer:
@@ -204,15 +221,19 @@ class MindFlowEngine(IBus.Engine):
         text = IBus.Text.new_from_string("MindFlow predictions - Tab accepts, Esc dismisses")
 
         attrs = IBus.AttrList()
-        attrs.append(IBus.Attribute.new(
-            IBus.AttrType.FOREGROUND,
-            0x00AAAAAA,  # Gray color
-            0, len(text.get_text()),
-        ))
+        attrs.append(
+            IBus.Attribute.new(
+                IBus.AttrType.FOREGROUND,
+                0x00AAAAAA,  # Gray color
+                0,
+                len(text.get_text()),
+            )
+        )
         text.set_attributes(attrs)
 
         self.update_auxiliary_text(text, True)
         self.show_auxiliary_text()
+        self._stats.increment("predictions_shown")
         return False  # Remove from GLib idle queue
 
     def _clamped_prediction_index(self):
@@ -228,9 +249,9 @@ class MindFlowEngine(IBus.Engine):
         if not self._predictions:
             return False
 
-        self._selected_prediction_index = (
-            self._clamped_prediction_index() + delta
-        ) % len(self._predictions)
+        self._selected_prediction_index = (self._clamped_prediction_index() + delta) % len(
+            self._predictions
+        )
         self._show_predictions()
         return True
 
@@ -257,26 +278,30 @@ class MindFlowEngine(IBus.Engine):
         text = IBus.Text.new_from_string(prediction)
         self.commit_text(text)
 
-        # Update context buffer
+        # Update context buffer and let the provider learn from the acceptance
         self._context_buffer += prediction
+        self.predictor.learn(self._context_buffer)
+        self._stats.increment("suggestions_accepted")
+        self._stats.save()
 
         # Clear predictions
         self._clear_predictions()
 
-        logger.info(f"Accepted prediction: '{prediction}'")
+        logger.info("Accepted prediction: '%s'", prediction)
 
     def _dismiss_predictions(self):
         """Dismiss current predictions without accepting."""
+        self._stats.increment("suggestions_dismissed")
         self._clear_predictions()
         logger.debug("Predictions dismissed")
 
     def _clear_predictions(self):
-        """Clear all predictions and hide auxiliary text."""
+        """Clear displayed predictions and hide auxiliary text (keeps cache warm)."""
         self._cancel_prediction_timer()
         with self._prediction_lock:
             self._predictions = []
             self._selected_prediction_index = 0
-        self.predictor.clear_cache()
+        self.predictor.clear_pending()
         self.hide_lookup_table()
         self.hide_auxiliary_text()
 
@@ -315,7 +340,22 @@ class MindFlowEngine(IBus.Engine):
         self._context_buffer = ""
         self._last_requested_context = ""
         self._clear_predictions()
+        self._stats.save()
         logger.debug("Focus out")
+
+    def do_set_content_type(self, purpose, hints):
+        """Disable predictions in password / PIN fields for privacy."""
+        sensitive_purposes = {
+            int(IBus.InputPurpose.PASSWORD),
+            int(IBus.InputPurpose.PIN),
+        }
+        self._sensitive_field = (
+            self.config.disable_in_password_fields and int(purpose) in sensitive_purposes
+        )
+        if self._sensitive_field:
+            self._context_buffer = ""
+            self._clear_predictions()
+            logger.debug("Sensitive input field detected; predictions disabled")
 
     def do_reset(self):
         """Reset the engine state."""
@@ -383,7 +423,7 @@ def _create_component():
         version="0.1.0",
         license=LICENSE,
         author=AUTHOR,
-        homepage="https://github.com/seemoo/mindflow",
+        homepage=HOMEPAGE,
         command_line="mindflow-engine",
         textdomain="mindflow",
     )

@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Lint & type-check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install tooling
+        run: |
+          python -m pip install --upgrade pip
+          pip install ruff mypy
+      - name: Ruff lint
+        run: ruff check .
+      - name: Ruff format check
+        run: ruff format --check .
+      - name: Mypy
+        run: mypy mindflow
+
+  test:
+    name: Tests (py${{ matrix.python-version }})
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install IBus / GObject system libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libgirepository1.0-dev gir1.2-ibus-1.0 ibus \
+            libcairo2-dev gobject-introspection pkg-config
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install MindFlow and dev dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # PyGObject is normally provided by the distro; <3.50 builds against
+          # the girepository-1.0 dev headers shipped on ubuntu-22.04.
+          pip install "pygobject<3.50"
+          pip install -e ".[dev]"
+      - name: Run tests
+        run: pytest -m "not integration" --cov=mindflow --cov-report=term-missing

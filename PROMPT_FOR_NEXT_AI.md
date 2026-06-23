@@ -89,7 +89,7 @@ I tried subclassing `IBus.Factory` to override `do_create_engine`:
 class MindFlowFactory(IBus.Factory):
     def __init__(self, bus):
         super().__init__(bus=bus)
-    
+
     def do_create_engine(self, engine_name):
         if engine_name == ENGINE_NAME:
             return MindFlowEngine()
