@@ -63,6 +63,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `_update_preedit()` and `_commit_preedit()` methods (transparent typing)
 - `_trigger_prediction()` direct thread spawning (replaced with GLib.timeout_add)
 
+## [0.2.0] - 2026-06-23
+
+### Added
+- **Pluggable provider architecture** (`mindflow/providers/`) — `gemini` and an
+  offline `local` n-gram provider, with a `FallbackProvider` that uses Gemini
+  when a key is configured and transparently falls back to the local model
+  otherwise. MindFlow now works with **no API key**.
+- **Offline local provider** that learns from accepted text and persists a
+  small human-readable history to `~/.local/state/mindflow/local_history.json`.
+- **`mindflow` CLI** with subcommands: `doctor` (environment diagnostics),
+  `config` (show/path/edit/get/set), `predict`, `repl`, `stats`, `version`.
+- **Bounded LRU + TTL cache** (`mindflow/cache.py`) with hit/miss accounting.
+- **Local usage stats** (`mindflow/stats.py`) persisted to
+  `~/.local/state/mindflow/stats.json`; opt-out via `stats_enabled`.
+- **Privacy**: predictions are suppressed in password/PIN input fields, plus a
+  configurable per-app `blocklist_apps`.
+- Config: environment-variable overrides (`MINDFLOW_API_KEY`/`GEMINI_API_KEY`,
+  `MINDFLOW_CONFIG`), `validate()`, and new `provider`/privacy/cache fields.
+- Modern packaging via `pyproject.toml` (console scripts `mindflow` and
+  `mindflow-engine`), `Makefile`, GitHub Actions CI (lint + 3.10/3.11/3.12
+  test matrix), and pre-commit hooks (ruff, ruff-format, mypy).
+- Expanded test suite to 82 tests covering providers, cache, stats, CLI, config
+  overrides, and engine privacy behaviour.
+
+### Changed
+- `Predictor` now owns a `PredictionProvider` instead of a `GeminiClient`
+  directly, and is built via `Predictor.from_config(...)`.
+- `GeminiClient` honours configured limits and budgets enough output tokens for
+  the requested number/length of predictions; dedupes repeated predictions.
+
+### Fixed
+- Dismissing predictions no longer wipes the whole cache — `clear_pending()`
+  clears only the in-flight UI suggestions, keeping the cache warm.
+- Malformed `<symbol>` tag in `data/mindflow-engine.xml`.
+- Stale `seemoo` homepage URLs updated to `simoabid/MindFlow`.
+
+### Removed
+- `setup.py` (superseded by `pyproject.toml`).
+
 ## [0.1.0] - 2026-06-22
 
 ### Added

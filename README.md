@@ -6,12 +6,12 @@
 [![Wayland](https://img.shields.io/badge/Wayland-Ready-green.svg)](https://wayland.freedesktop.org/)
 [![Contributions Welcome](https://img.shields.io/badge/contributions-welcome-brightgreen.svg)](CONTRIBUTING.md)
 
-System-wide AI-powered text autocomplete powered by Google Gemini.
+System-wide AI-powered text autocomplete for Linux — powered by Google Gemini, with a fully offline local mode that needs no API key.
 
-**Type anywhere → See AI predictions in the IBus candidate UI → Press Tab to accept.**
+**Type anywhere → See predictions in the IBus candidate UI → Press Tab to accept.**
 
 <p align="center">
-  <em>Works in every app. No root. No keylogger. Wayland-native.</em>
+  <em>Works in every app. No root. No keylogger. Wayland-native. Works offline.</em>
 </p>
 
 ---
@@ -20,18 +20,21 @@ System-wide AI-powered text autocomplete powered by Google Gemini.
 
 - 🌍 **Universal** — Works in every app (browser, terminal, editor, chat...)
 - 🧠 **AI-Powered** — Fast predictions via Google Gemini Flash
+- 📴 **Offline Mode** — Built-in local n-gram provider works with **no API key** and learns from what you accept
+- 🔌 **Pluggable Providers** — Choose `gemini`, `local`, or Gemini with automatic local fallback
 - ⌨️ **Transparent Typing** — Your keys go to the app, not the engine
 - 🔼🔽 **Navigation** — Arrow keys to browse predictions
 - 🖱️ **Click to Accept** — Click predictions in the popup
-- 💾 **Smart Caching** — Minimizes API calls
-- 🔒 **Secure** — Runs as IBus input method, no root needed
+- 💾 **Smart Caching** — Bounded LRU + TTL cache minimizes API calls
+- 🔒 **Privacy First** — Auto-disables in password/PIN fields; per-app blocklist; opt-out usage stats
+- 🛠️ **CLI Included** — `mindflow doctor`, `predict`, `repl`, `config`, `stats`
 - ✅ **Wayland & X11** — Works on both display servers
 
 ## 📋 Requirements
 
 - Linux with IBus (Ubuntu, Zorin OS, Fedora, etc.)
 - Python 3.10+
-- Google Gemini API key ([get one free](https://aistudio.google.com/apikey))
+- *(Optional)* Google Gemini API key ([get one free](https://aistudio.google.com/apikey)) — without it, MindFlow runs in offline local mode
 
 ### System Dependencies
 
@@ -53,17 +56,25 @@ sudo pacman -S ibus python-gobject
 ## 🚀 Quick Install
 
 ```bash
-git clone https://github.com/seemoo/mindflow.git
-cd mindflow
+git clone https://github.com/simoabid/MindFlow.git
+cd MindFlow
 chmod +x install.sh
 ./install.sh
 ```
 
-Then set your API key:
+MindFlow works out of the box in **offline local mode**. To enable Gemini
+predictions, provide an API key via either:
+
 ```bash
-# Edit ~/.config/mindflow/config.json
-# Set "api_key": "YOUR_GEMINI_API_KEY"
+# Option A: environment variable (also picks up GEMINI_API_KEY)
+export MINDFLOW_API_KEY="YOUR_GEMINI_API_KEY"
+
+# Option B: config file
+mindflow config set api_key YOUR_GEMINI_API_KEY
+mindflow config set provider gemini
 ```
+
+Run `mindflow doctor` at any time to check your setup.
 
 ## 📖 Usage
 
@@ -81,13 +92,19 @@ Edit `~/.config/mindflow/config.json`:
 
 ```json
 {
-  "api_key": "YOUR_GEMINI_API_KEY",
+  "api_key": "",
+  "provider": "gemini",
   "model": "gemini-3.1-flash-lite-preview",
   "enabled": true,
   "debounce_ms": 300,
   "max_predictions": 6,
   "max_suggestion_words": 12,
-  "min_buffer_length": 3
+  "min_buffer_length": 3,
+  "cache_max_entries": 256,
+  "cache_ttl_seconds": 600,
+  "disable_in_password_fields": true,
+  "blocklist_apps": [],
+  "stats_enabled": true
 }
 ```
 
@@ -95,13 +112,41 @@ Edit `~/.config/mindflow/config.json`:
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `api_key` | `""` | Your Google Gemini API key |
+| `api_key` | `""` | Your Google Gemini API key (optional) |
+| `provider` | `gemini` | `gemini` (with local fallback) or `local` (fully offline) |
 | `model` | `gemini-3.1-flash-lite-preview` | Gemini model to use |
 | `enabled` | `true` | Enable/disable MindFlow |
 | `debounce_ms` | `300` | Milliseconds to wait before requesting predictions |
 | `max_predictions` | `6` | Maximum number of predictions to show |
 | `max_suggestion_words` | `12` | Maximum words per prediction |
 | `min_buffer_length` | `3` | Minimum characters before triggering predictions |
+| `cache_max_entries` | `256` | Max entries in the LRU cache |
+| `cache_ttl_seconds` | `600` | Seconds before a cached prediction expires |
+| `disable_in_password_fields` | `true` | Suppress predictions in password/PIN fields |
+| `blocklist_apps` | `[]` | App identifiers where MindFlow stays disabled |
+| `stats_enabled` | `true` | Track local usage stats (never leaves your machine) |
+
+### Environment Variables
+
+| Variable | Description |
+|----------|-------------|
+| `MINDFLOW_API_KEY` / `GEMINI_API_KEY` | Override the configured API key |
+| `MINDFLOW_CONFIG` | Path to an alternate config file |
+
+## 🖥️ CLI
+
+MindFlow ships a `mindflow` command for setup and testing from the terminal:
+
+```bash
+mindflow doctor                       # Diagnose environment, bindings, provider
+mindflow predict "I am writing to"    # Print predictions for some context
+mindflow predict --json "hello"       # ...as JSON
+mindflow repl                         # Interactive prediction prompt
+mindflow config show                  # Print current config
+mindflow config set provider local    # Switch to offline mode
+mindflow stats                        # Show local usage stats
+mindflow version
+```
 
 ## 🔧 How It Works
 
@@ -117,39 +162,50 @@ Built as a custom IBus input method engine — the Linux-native way.
 ## 📁 Project Structure
 
 ```
-mindflow/
+MindFlow/
 ├── mindflow/
-│   ├── __init__.py          # Package init
-│   ├── constants.py         # App constants
-│   ├── config.py            # Configuration management
+│   ├── __init__.py          # Package init (version)
+│   ├── constants.py         # App constants & XDG paths
+│   ├── config.py            # Configuration (env overrides, validation)
+│   ├── cache.py             # Bounded LRU + TTL cache
+│   ├── stats.py             # Local usage stats tracker
 │   ├── gemini_client.py     # Gemini API wrapper
-│   ├── predictor.py         # Prediction caching & debouncing
-│   └── engine.py            # IBus engine (core logic)
+│   ├── predictor.py         # Prediction orchestration & caching
+│   ├── cli.py               # `mindflow` command-line interface
+│   ├── engine.py            # IBus engine (core logic)
+│   └── providers/
+│       ├── base.py          # PredictionProvider interface
+│       ├── gemini.py        # Gemini-backed provider
+│       ├── local.py         # Offline n-gram provider
+│       └── __init__.py      # Provider factory + fallback wrapper
 ├── data/
 │   ├── mindflow.xml         # IBus component descriptor
 │   └── mindflow-engine.xml  # Engine metadata
-├── tests/
-│   ├── test_config.py       # Config tests
-│   ├── test_gemini_client.py # Gemini client tests
-│   ├── test_predictor.py    # Predictor tests
-│   ├── test_engine_bootstrap.py # Engine unit tests
-│   └── integration_test.py  # Manual integration test
-├── install.sh               # Installation script
-├── uninstall.sh             # Uninstallation script
-└── setup.py                 # Package configuration
+├── tests/                   # 82 unit tests
+├── .github/workflows/ci.yml # Lint + test matrix CI
+├── install.sh / uninstall.sh
+├── Makefile                 # dev/lint/format/typecheck/test/check
+└── pyproject.toml           # Packaging, scripts, tool config
 ```
 
 ## 🧪 Testing
 
 ```bash
-# Run all unit tests
-pytest tests/ -v
+# Install dev dependencies
+make dev          # or: pip install -e ".[dev]"
 
-# Run integration test (requires API key)
+# Run the full check suite (lint + format + typecheck + tests)
+make check
+
+# Individual targets
+make test         # pytest
+make lint         # ruff check
+make format       # ruff format
+make typecheck    # mypy
+make cov          # tests with coverage
+
+# Run the integration test (requires a real API key)
 python tests/integration_test.py
-
-# Run with coverage
-pytest tests/ --cov=mindflow --cov-report=html
 ```
 
 ## 🗑️ Uninstall
@@ -198,8 +254,8 @@ This project is licensed under the MIT License — see the [LICENSE](LICENSE) fi
 
 ## 📧 Contact
 
-- **Issues:** [GitHub Issues](https://github.com/seemoo/mindflow/issues)
-- **Discussions:** [GitHub Discussions](https://github.com/seemoo/mindflow/discussions)
+- **Issues:** [GitHub Issues](https://github.com/simoabid/MindFlow/issues)
+- **Discussions:** [GitHub Discussions](https://github.com/simoabid/MindFlow/discussions)
 
 ---
 
