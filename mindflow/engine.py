@@ -210,7 +210,10 @@ class MindFlowEngine(IBus.Engine):
             self.hide_auxiliary_text()
             return False
 
-        lookup_table = IBus.LookupTable(page_size=len(self._predictions))
+        # Use the explicit .new() constructor rather than the page_size kwarg:
+        # older IBus builds (e.g. Ubuntu 22.04) don't expose page_size as a
+        # GObject construct property.
+        lookup_table = IBus.LookupTable.new(len(self._predictions), 0, True, True)
         for prediction in self._predictions:
             lookup_table.append_candidate(IBus.Text.new_from_string(prediction))
         lookup_table.set_cursor_visible(True)
