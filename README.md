@@ -26,7 +26,7 @@ System-wide AI-powered text autocomplete for Linux — powered by Google Gemini,
 - 🔼🔽 **Navigation** — Arrow keys to browse predictions
 - 🖱️ **Click to Accept** — Click predictions in the popup
 - 💾 **Smart Caching** — Bounded LRU + TTL cache minimizes API calls
-- 🔒 **Privacy First** — Auto-disables in password/PIN fields; per-app blocklist; opt-out usage stats
+- 🔒 **Privacy First** — Auto-disables in password/PIN fields; opt-out local-only usage stats
 - 🛠️ **CLI Included** — `mindflow doctor`, `predict`, `repl`, `config`, `stats`
 - ✅ **Wayland & X11** — Works on both display servers
 
@@ -123,7 +123,7 @@ Edit `~/.config/mindflow/config.json`:
 | `cache_max_entries` | `256` | Max entries in the LRU cache |
 | `cache_ttl_seconds` | `600` | Seconds before a cached prediction expires |
 | `disable_in_password_fields` | `true` | Suppress predictions in password/PIN fields |
-| `blocklist_apps` | `[]` | App identifiers where MindFlow stays disabled |
+| `blocklist_apps` | `[]` | Reserved for upcoming per-app disabling (not yet enforced) |
 | `stats_enabled` | `true` | Track local usage stats (never leaves your machine) |
 
 ### Environment Variables

@@ -20,7 +20,7 @@ def test_full_pipeline():
         print('   Set "api_key": "YOUR_GEMINI_API_KEY"')
         sys.exit(1)
 
-    predictor = Predictor(api_key=config.api_key, model=config.model)
+    predictor = Predictor.from_config(config)
 
     test_cases = [
         "The weather today is",

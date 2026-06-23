@@ -174,7 +174,10 @@ def cmd_config(args: argparse.Namespace) -> int:
         config = MindFlowConfig.load()
         data = asdict(config)
         if not args.show_secrets and data.get("api_key"):
-            data["api_key"] = "***" + data["api_key"][-4:]
+            key = data["api_key"]
+            # Only reveal the last 4 chars of sufficiently long keys; mask short
+            # ones entirely so a tiny key isn't shown in full.
+            data["api_key"] = "***" + key[-4:] if len(key) > 8 else "***"
         _print(json.dumps(data, indent=2))
         return 0
 

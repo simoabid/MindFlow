@@ -38,7 +38,11 @@ class FallbackProvider(PredictionProvider):
 
     def predict(self, context: str) -> list[str]:
         if self.primary.is_available():
-            predictions = self.primary.predict(context)
+            try:
+                predictions = self.primary.predict(context)
+            except Exception as e:  # defensive: never let a provider break typing
+                logger.warning("Primary provider %r failed: %s", self.primary.name, e)
+                predictions = []
             if predictions:
                 return predictions
         return self.fallback.predict(context)

@@ -77,8 +77,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Bounded LRU + TTL cache** (`mindflow/cache.py`) with hit/miss accounting.
 - **Local usage stats** (`mindflow/stats.py`) persisted to
   `~/.local/state/mindflow/stats.json`; opt-out via `stats_enabled`.
-- **Privacy**: predictions are suppressed in password/PIN input fields, plus a
-  configurable per-app `blocklist_apps`.
+- **Privacy**: predictions are suppressed in password/PIN input fields. A
+  `blocklist_apps` config field is reserved for upcoming per-app disabling
+  (declared but not yet enforced by the engine).
 - Config: environment-variable overrides (`MINDFLOW_API_KEY`/`GEMINI_API_KEY`,
   `MINDFLOW_CONFIG`), `validate()`, and new `provider`/privacy/cache fields.
 - Modern packaging via `pyproject.toml` (console scripts `mindflow` and

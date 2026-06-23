@@ -58,3 +58,32 @@ def test_clear():
     cache.set("k", ["v"])
     cache.clear()
     assert len(cache) == 0
+
+
+def test_contains_has_no_side_effects():
+    clock = FakeClock()
+    cache = TTLCache(max_entries=2, ttl_seconds=10, time_fn=clock)
+    cache.set("a", ["1"])
+    cache.set("b", ["2"])
+
+    # Membership checks must not touch hit/miss counters or LRU ordering.
+    assert "a" in cache
+    assert "missing" not in cache
+    assert cache.hits == 0
+    assert cache.misses == 0
+
+    # 'a' was not promoted by `in`, so it stays least-recently-used and is
+    # evicted when a third entry is added.
+    cache.set("c", ["3"])
+    assert "a" not in cache
+    assert "b" in cache
+    assert "c" in cache
+
+
+def test_contains_respects_ttl():
+    clock = FakeClock()
+    cache = TTLCache(max_entries=4, ttl_seconds=10, time_fn=clock)
+    cache.set("k", ["v"])
+    assert "k" in cache
+    clock.now = 11
+    assert "k" not in cache

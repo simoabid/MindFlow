@@ -281,9 +281,11 @@ class MindFlowEngine(IBus.Engine):
         text = IBus.Text.new_from_string(prediction)
         self.commit_text(text)
 
-        # Update context buffer and let the provider learn from the acceptance
+        # Update context buffer and let the provider learn from the acceptance.
+        # Only feed the accepted suggestion (not the whole session buffer) so the
+        # learned history stays small and doesn't accumulate overlapping text.
         self._context_buffer += prediction
-        self.predictor.learn(self._context_buffer)
+        self.predictor.learn(prediction.strip())
         self._stats.increment("suggestions_accepted")
         self._stats.save()
 

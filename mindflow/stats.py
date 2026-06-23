@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from dataclasses import asdict, dataclass, fields
 from pathlib import Path
 
@@ -61,8 +62,14 @@ class StatsTracker:
             return
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
-            with open(self.path, "w", encoding="utf-8") as f:
+            # Owner-only perms, consistent with config/history files.
+            fd = os.open(self.path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
                 json.dump(asdict(self.stats), f, indent=2)
+            try:
+                os.chmod(self.path, 0o600)
+            except OSError as e:  # pragma: no cover - platform dependent
+                logger.debug("Could not set permissions on stats file: %s", e)
         except OSError as e:
             logger.debug("Could not persist stats: %s", e)
 
